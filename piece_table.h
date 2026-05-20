@@ -9,7 +9,7 @@
 //  O(1) insert/delete via append-only buffers + piece list
 // ============================================================
 
-namespace sin {
+namespace sino {
 
 enum class BufferType : uint8_t { Original, Added };
 
@@ -70,4 +70,4 @@ private:
     size_t count_lines(std::string_view sv) const;
 };
 
-} // namespace sin
+} // namespace sino
