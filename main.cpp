@@ -41,7 +41,7 @@
 // ---- Namespace imports ------------------------------------------------------
 namespace fs = std::filesystem;
 
-using namespace sin;       // Document, TabManager, PieceTable, Point, Highlighter ...
+using namespace sino;       // Document, TabManager, PieceTable, Point, Highlighter ...
 using sin::COLORS;         // FIX [2]: explicit import resolves COLORS in all scopes
 
 // ---- Layout -----------------------------------------------------------------
