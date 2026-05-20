@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <numeric>
 
-namespace sin {
+namespace sino {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -223,4 +223,4 @@ void PieceTable::redo() {
     dirty_ = true;
 }
 
-} // namespace sin
+} // namespace sino
