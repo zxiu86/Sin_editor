@@ -34,7 +34,9 @@ if(ANDROID)
   set(NATIVE_APP_GLUE_DIR ${ANDROID_NDK}/sources/android/native_app_glue)
   include_directories(${NATIVE_APP_GLUE_DIR})
   add_library(native_app_glue STATIC ${NATIVE_APP_GLUE_DIR}/android_native_app_glue.c)
-  
+  target_include_directories(sin_editor PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    build-android/_deps/raylib-src/src)
 else()
   # Desktop: FetchContent
   find_package(raylib 5.0 QUIET)
