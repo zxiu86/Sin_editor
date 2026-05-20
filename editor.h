@@ -11,7 +11,7 @@
 //  SIN Editor — Editor State & Document Model
 // ============================================================
 
-namespace sin {
+namespace sino {
 
 namespace fs = std::filesystem;
 
