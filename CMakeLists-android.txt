@@ -1,0 +1,23 @@
+cmake_minimum_required(VERSION 3.22)
+project(sineditor_engine LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD          20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# ---- Engine sources ---------------------------------------------------------
+add_library(sineditor_engine SHARED
+    jni_bridge.cpp
+    piece_table.cpp
+)
+
+# Sources in root
+
+# ---- Android system libs ----------------------------------------------------
+find_library(lib_log log)
+
+target_link_libraries(sineditor_engine PRIVATE ${lib_log})
+
+# ---- Compiler flags ---------------------------------------------------------
+target_compile_options(sineditor_engine PRIVATE
+    -Wall -Wextra -O2
+)
