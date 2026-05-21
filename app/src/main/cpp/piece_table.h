@@ -3,13 +3,21 @@
 #include <vector>
 #include <cstdint>
 #include <optional>
+#include <memory>
 
 // ============================================================
-//  SIN Editor — Piece Table Text Buffer
+//  SIN Editor — Piece Table Text Buffer (Android Optimized)
 //  O(1) insert/delete via append-only buffers + piece list
+//  Memory-capped undo/redo for mobile constraints
 // ============================================================
 
 namespace sino {
+
+// Memory limits for mobile (configurable)
+constexpr size_t MAX_ADDED_BUFFER_SIZE = 8 * 1024 * 1024;   // 8 MB cap
+constexpr size_t MAX_UNDO_SNAPSHOTS    = 50;                // Max undo levels
+constexpr size_t MAX_REDO_SNAPSHOTS    = 25;                // Max redo levels
+constexpr size_t MEMORY_PRESSURE_THRESHOLD = 6 * 1024 * 1024; // 6 MB warning
 
 enum class BufferType : uint8_t { Original, Added };
 
@@ -22,9 +30,21 @@ struct Piece {
 
 struct Point { size_t line, col; };
 
+// Forward declarations for memory tracking
+class MemoryTracker;
+
 class PieceTable {
 public:
     explicit PieceTable(std::string original = "");
+    ~PieceTable();
+
+    // Disable copy to prevent accidental expensive copies
+    PieceTable(const PieceTable&) = delete;
+    PieceTable& operator=(const PieceTable&) = delete;
+
+    // Enable move for efficient transfers
+    PieceTable(PieceTable&&) noexcept;
+    PieceTable& operator=(PieceTable&&) noexcept;
 
     // ── Core editing ─────────────────────────────────────────
     void insert(size_t char_pos, std::string_view text);
@@ -47,6 +67,11 @@ public:
     bool is_dirty() const { return dirty_; }
     void mark_clean()     { dirty_ = false; }
 
+    // ── Memory management ────────────────────────────────────
+    size_t memory_usage() const;
+    bool is_memory_pressure() const { return added_buf_.size() > MEMORY_PRESSURE_THRESHOLD; }
+    void compact();  // Force compaction when memory pressure is high
+
 private:
     // Two append-only buffers — never freed during session
     std::string original_buf_;
@@ -68,6 +93,11 @@ private:
     void push_snapshot();
     std::pair<size_t, size_t> find_piece(size_t char_pos) const;  // {piece_idx, offset_within}
     size_t count_lines(std::string_view sv) const;
+
+    // Memory management helpers
+    void enforce_memory_limits();
+    void trim_undo_stack();
+    void trim_redo_stack();
 };
 
 } // namespace sino

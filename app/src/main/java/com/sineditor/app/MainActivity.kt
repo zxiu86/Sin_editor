@@ -24,6 +24,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tabScroll  : HorizontalScrollView
     private lateinit var statusBar  : TextView
     private lateinit var headerRow  : LinearLayout
+    private lateinit var toolbarRow : LinearLayout  // Touch toolbar for actions
 
     // ---- Documents ----------------------------------------------------------
     private data class Doc(
@@ -58,7 +59,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(buildRootLayout())
 
         newDoc()
-        setStatus("SIN Editor  \u2014  Ready")
+        setStatus("SIN Editor  —  Ready")
     }
 
     override fun onDestroy() {
@@ -76,6 +77,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         root.addView(buildHeader())
+        root.addView(buildToolbar())  // Touch action toolbar
         root.addView(buildTabBar())
 
         editorView = EditorView(this).apply {
@@ -84,7 +86,9 @@ class MainActivity : AppCompatActivity() {
             isFocusable = true
             isFocusableInTouchMode = true
             onSave { saveDoc() }
+            onNewDoc { newDoc() }
             onDirtyChanged = { refreshTabs() }
+            onMemoryWarning = { showMemoryWarning() }
         }
         root.addView(editorView)
         root.addView(buildStatusBar())
@@ -102,8 +106,8 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(6), 0, dp(6), 0)
         }
 
-        // Hamburger
-        headerRow.addView(iconBtn("\u2630", Color.rgb(0, 200, 160)) { showMenu() })
+        // Hamburger menu
+        headerRow.addView(iconBtn("☰", Color.rgb(0, 200, 160)) { showMenu() })
 
         // Title (flexible space)
         headerRow.addView(TextView(this).apply {
@@ -116,35 +120,54 @@ class MainActivity : AppCompatActivity() {
         })
 
         // Find button
-        headerRow.addView(iconBtn("\uD83D\uDD0D", Color.rgb(160, 160, 200)) {
+        headerRow.addView(iconBtn("🔍", Color.rgb(160, 160, 200)) {
             toggleFind()
         })
 
         // Font size buttons
-        headerRow.addView(iconBtn("A\u207B", Color.rgb(160, 160, 160)) { changeFontSize(-1) })
-        headerRow.addView(iconBtn("A\u207A", Color.rgb(160, 160, 160)) { changeFontSize(+1) })
+        headerRow.addView(iconBtn("A⁻", Color.rgb(160, 160, 160)) { changeFontSize(-1) })
+        headerRow.addView(iconBtn("A⁺", Color.rgb(160, 160, 160)) { changeFontSize(+1) })
 
-        // Undo / Redo
-        headerRow.addView(iconBtn("\u21B6", Color.rgb(0, 200, 160)) {
-            editorView.engine.undo(); editorView.invalidate()
+        return headerRow
+    }
+
+    /** Touch Toolbar - replaces keyboard shortcuts with visible buttons */
+    private fun buildToolbar(): View {
+        toolbarRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(42))
+            setBackgroundColor(Color.rgb(18, 18, 28))
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), 0, dp(4), 0)
+        }
+
+        // New document button
+        toolbarRow.addView(touchBtn("📄 New", Color.rgb(0, 200, 160)) {
+            newDoc()
         })
-        headerRow.addView(iconBtn("\u21B7", Color.rgb(0, 200, 160)) {
-            editorView.engine.redo(); editorView.invalidate()
+
+        // Save button
+        toolbarRow.addView(touchBtn("💾 Save", Color.rgb(0, 200, 160)) {
+            saveDoc()
+        })
+
+        // Undo button
+        toolbarRow.addView(touchBtn("↶ Undo", Color.rgb(160, 160, 160)) {
+            editorView.actionUndo()
+        })
+
+        // Redo button
+        toolbarRow.addView(touchBtn("↷ Redo", Color.rgb(160, 160, 160)) {
+            editorView.actionRedo()
         })
 
         // Run button
-        headerRow.addView(Button(this).apply {
-            text      = "RUN"
-            textSize  = 11f
-            setTextColor(Color.BLACK)
-            setBackgroundColor(Color.rgb(0, 210, 80))
-            layoutParams = LinearLayout.LayoutParams(dp(64), dp(34)).apply {
-                marginStart = dp(4)
-            }
-            setOnClickListener { runScript() }
+        toolbarRow.addView(touchBtn("▶ Run", Color.rgb(0, 210, 80)) {
+            runScript()
         })
 
-        return headerRow
+        return toolbarRow
     }
 
     private fun buildTabBar(): View {
@@ -190,17 +213,33 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { action() }
         }
 
+    // Helper: touch toolbar button with label
+    private fun touchBtn(label: String, tint: Int, action: () -> Unit): View =
+        TextView(this).apply {
+            text     = label
+            textSize = 11f
+            setTextColor(tint)
+            gravity  = Gravity.CENTER
+            setPadding(dp(8), 0, dp(8), 0)
+            layoutParams = LinearLayout.LayoutParams(0, dp(36), 1f).apply {
+                marginStart = dp(2)
+                marginEnd = dp(2)
+            }
+            setOnClickListener { action() }
+        }
+
     // =========================================================================
     // Hamburger Menu
     // =========================================================================
     private fun showMenu() {
         val items = arrayOf(
-            "\uD83D\uDCC4  New File",
-            "\uD83D\uDCC2  Open File",
-            "\uD83D\uDCBE  Save",
-            "\uD83D\uDCBE  Save As\u2026",
-            "\u2716  Close Tab",
-            "\u2139  About"
+            "📄  New File",
+            "📂  Open File",
+            "💾  Save",
+            "💾  Save As…",
+            "✖  Close Tab",
+            "📊  Memory Info",
+            "ℹ  About"
         )
         AlertDialog.Builder(this)
             .setTitle(null)
@@ -211,7 +250,8 @@ class MainActivity : AppCompatActivity() {
                     2 -> saveDoc()
                     3 -> saveAsPicker()
                     4 -> closeDoc()
-                    5 -> showAbout()
+                    5 -> showMemoryInfo()
+                    6 -> showAbout()
                 }
             }
             .show()
@@ -219,18 +259,71 @@ class MainActivity : AppCompatActivity() {
 
     private fun showAbout() {
         AlertDialog.Builder(this)
-            .setTitle("SIN Editor  v0.2")
+            .setTitle("SIN Editor  v0.3 (Android Only)")
             .setMessage(
-                "SINO Language IDE\n\n" +
-                "Architecture:\n" +
-                "  \u2022 Kotlin  \u2192 UI, lifecycle, file I/O\n" +
-                "  \u2022 C++20  \u2192 Piece Table engine (via JNI)\n\n" +
-                "Engine: O(1) insert / delete\n" +
-                "Rendering: Android Canvas\n" +
-                "Syntax: SINO language"
+                "SINO Language IDE
+
+" +
+                "Architecture:
+" +
+                "  • Kotlin  → UI, lifecycle, file I/O
+" +
+                "  • C++20  → Piece Table engine (via JNI)
+
+" +
+                "Engine: O(1) insert / delete
+" +
+                "Memory: Capped undo/redo (8MB limit)
+" +
+                "Rendering: Android Canvas
+" +
+                "Syntax: SINO language
+
+" +
+                "Desktop support removed. Android optimized."
             )
             .setPositiveButton("OK", null)
             .show()
+    }
+
+    // =========================================================================
+    // Memory Info
+    // =========================================================================
+    private fun showMemoryInfo() {
+        val doc = docs.getOrNull(activeIdx) ?: return
+        val mem = doc.engine.memoryUsage
+        val pressure = doc.engine.isMemoryPressure
+
+        AlertDialog.Builder(this)
+            .setTitle("Memory Usage")
+            .setMessage(
+                "Document: ${doc.title}
+" +
+                "Memory: ${mem / 1024} KB
+" +
+                "Status: ${if (pressure) "⚠ HIGH PRESSURE" else "✓ Normal"}
+
+" +
+                "Limits:
+" +
+                "  Max buffer: 8 MB
+" +
+                "  Max undo: 50 levels
+" +
+                "  Max redo: 25 levels"
+            )
+            .setPositiveButton("Compact") { _, _ ->
+                doc.engine.compact()
+                setStatus("Memory compacted")
+            }
+            .setNegativeButton("OK", null)
+            .show()
+    }
+
+    private fun showMemoryWarning() {
+        Toast.makeText(this, 
+            "⚠ Memory pressure high! Consider saving and compacting.",
+            Toast.LENGTH_LONG).show()
     }
 
     // =========================================================================
@@ -268,7 +361,12 @@ class MainActivity : AppCompatActivity() {
     // =========================================================================
     private fun newDoc() {
         val engine = EditorEngine(
-            "// SIN Editor  \u2014  SINO Language\n\nfn main() {\n    println(\"Hello SINO!\")\n}\n"
+            "// SIN Editor  —  SINO Language
+
+fn main() {
+    println("Hello SINO!")
+}
+"
         )
         engine.markClean()
         docs += Doc("untitled-${docs.size + 1}", null, engine)
@@ -329,21 +427,12 @@ class MainActivity : AppCompatActivity() {
 
             // Active line indicator
             if (active) {
-                // Bottom accent bar drawn as a child
-                val accent = View(this).apply {
-                    setBackgroundColor(Color.rgb(0, 200, 160))
-                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)).apply {
-                        gravity = Gravity.BOTTOM
-                    }
-                }
-                // We use a FrameLayout to overlay the accent line
                 val frame = android.widget.FrameLayout(this).apply {
                     layoutParams = LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.WRAP_CONTENT,
                         ViewGroup.LayoutParams.MATCH_PARENT)
                     addView(tabView)
                 }
-                // Re-add to tabLayout as frame
                 tabLayout.addView(frame)
                 continue
             }
@@ -352,7 +441,7 @@ class MainActivity : AppCompatActivity() {
 
             // Close button (×)
             tabView.addView(TextView(this).apply {
-                text      = "\u00D7"
+                text      = "×"
                 textSize  = 14f
                 setTextColor(Color.rgb(120, 120, 120))
                 setPadding(dp(6), 0, dp(4), 0)
@@ -431,7 +520,8 @@ class MainActivity : AppCompatActivity() {
     private fun readUri(uri: Uri): String {
         val sb = StringBuilder()
         contentResolver.openInputStream(uri)?.use { s ->
-            BufferedReader(InputStreamReader(s)).forEachLine { sb.append(it).append('\n') }
+            BufferedReader(InputStreamReader(s)).forEachLine { sb.append(it).append('
+') }
         }
         return sb.toString()
     }

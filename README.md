@@ -1,6 +1,6 @@
-# SIN Editor
+# SIN Editor v0.3 (Android Only)
 
-High-performance IDE for the SINO programming language.
+High-performance IDE for the SINO programming language. **Desktop support removed.**
 
 ## Architecture
 
@@ -8,51 +8,41 @@ High-performance IDE for the SINO programming language.
 ┌─────────────────────────────────────────────────────┐
 │  KOTLIN  (UI Shell)                                  │
 │  MainActivity  ──  tab management, file I/O, menu   │
-│  EditorView    ──  Canvas rendering, IME, touch      │
-│  FindReplaceDialog  ──  search & replace overlay    │
-│  SyntaxHighlighter  ──  SINO tokeniser (Kotlin)     │
+│  EditorView    ──  Canvas rendering, IME, touch       │
+│  FindReplaceDialog  ──  search & replace overlay      │
+│  SyntaxHighlighter  ──  SINO tokeniser (Kotlin)       │
 ├─────────────────────────────────────────────────────┤
 │  JNI Bridge  (jni_bridge.cpp)                        │
-│  16 native functions: insert, erase, undo, redo …   │
+│  19 native functions: insert, erase, undo, redo,     │
+│  memory monitoring, compaction ...                    │
 ├─────────────────────────────────────────────────────┤
 │  C++20 ENGINE  (piece_table.h / .cpp)               │
 │  O(1) insert / delete via Piece Table               │
-│  Append-only buffers  ──  snapshot undo/redo        │
+│  Append-only buffers  ──  snapshot undo/redo          │
+│  Memory caps: 8MB buffer, 50 undo, 25 redo levels     │
 └─────────────────────────────────────────────────────┘
 ```
 
 ## Project Layout
 
 ```
-sineditor-android/          Android app (Kotlin + C++ JNI)
-├── app/
-│   ├── build.gradle.kts
-│   ├── proguard-rules.pro
-│   └── src/main/
-│       ├── AndroidManifest.xml
-│       ├── cpp/
-│       │   ├── CMakeLists.txt      (Android-only CMake)
-│       │   ├── jni_bridge.cpp
-│       │   ├── piece_table.h
-│       │   └── piece_table.cpp
-│       ├── kotlin/com/sineditor/app/
-│       │   ├── EditorEngine.kt     (JNI wrapper)
-│       │   ├── EditorView.kt       (custom Canvas View)
-│       │   ├── FindReplaceDialog.kt
-│       │   ├── MainActivity.kt
-│       │   └── SyntaxHighlighter.kt
-│       └── res/
-│           ├── values/strings.xml
-│           └── values/themes.xml
-├── build.gradle.kts
-├── settings.gradle.kts
-├── gradlew / gradlew.bat
-└── .github/workflows/ci.yml
-
-CMakeLists.txt              Desktop build (Linux/Windows via Raylib)
-src/                        Desktop source (main.cpp, piece_table, etc.)
-res/
-└── sinoicon.png            App icon (used by both Desktop and Android)
+sin_editor/
+├── CMakeLists.txt              ← Android-only CMake
+├── settings.gradle.kts         ← Gradle settings
+├── AndroidManifest.xml         ← App manifest
+├── .github/workflows/ci.yml    ← Android CI
+└── app/src/main/
+    ├── cpp/
+    │   ├── CMakeLists.txt      ← Android NDK CMake
+    │   ├── jni_bridge.cpp      ← JNI bridge (19 functions)
+    │   ├── piece_table.h       ← Piece Table header
+    │   └── piece_table.cpp     ← Piece Table implementation
+    └── java/com/sineditor/app/
+        ├── EditorEngine.kt       ← JNI wrapper + memory API
+        ├── EditorView.kt         ← Canvas editor + touch UI
+        ├── FindReplaceDialog.kt  ← Find/replace overlay
+        ├── MainActivity.kt       ← Main activity
+        └── SyntaxHighlighter.kt  ← SINO tokenizer
 ```
 
 ## Build
@@ -62,10 +52,16 @@ res/
 **Requirements:** JDK 17, Android SDK + NDK 25
 
 ```bash
-# First-time: generate the Gradle wrapper jar
-gradle wrapper --gradle-version 8.7
+# Build native library
+cmake -B build-android \
+    -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+    -DANDROID_ABI=arm64-v8a \
+    -DANDROID_PLATFORM=android-21 \
+    -DCMAKE_BUILD_TYPE=Release
 
-# Build debug APK
+cmake --build build-android --parallel
+
+# Build APK via Gradle
 ./gradlew assembleDebug
 
 # APK location
@@ -74,39 +70,38 @@ ls app/build/outputs/apk/debug/app-debug.apk
 
 Or just push to GitHub — the CI generates it automatically.
 
-### Desktop (Linux / macOS)
+## Memory Management
 
-```bash
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build . --parallel
-./sin_editor
-```
+| Limit | Value | Action When Exceeded |
+|-------|-------|---------------------|
+| Added buffer | 8 MB | Auto-compaction |
+| Undo stack | 50 levels | Oldest snapshots discarded |
+| Redo stack | 25 levels | Oldest snapshots discarded |
+| Line cache | 200 lines | LRU eviction |
 
-### Desktop (Windows)
+Access memory info via:
+- `EditorEngine.memoryUsage` — bytes used
+- `EditorEngine.isMemoryPressure` — warning flag
+- `EditorEngine.compact()` — force compaction
 
-```powershell
-mkdir build; cd build
-cmake ..
-cmake --build . --config Release
-.\Release\sin_editor.exe
-```
+## Touch UI
+
+All actions are accessible via touch buttons:
+- **Toolbar**: New, Save, Undo, Redo, Run
+- **Tab bar**: Switch tabs, close tabs (×)
+- **Menu (☰)**: Open, Save As, Memory Info, About
+- **Find (🔍)**: Search & replace dialog
+
+## Keyboard Shortcuts (Hardware keyboards only)
+
+| Shortcut | Action |
+|----------|--------|
+| DEL | Backspace |
+| Forward DEL | Delete forward |
+| Enter | New line |
+| Tab | 4-space indent |
+| DPAD | Move caret |
 
 ## Icon
 
-Place your icon at `res/sinoicon.png` (any size, square PNG).  
-The CI copies it into all Android mipmap density folders automatically.  
-For Desktop, it is loaded via `SetWindowIcon()` at startup.
-
-## Keyboard Shortcuts (Desktop + Hardware keyboard)
-
-| Shortcut    | Action            |
-|-------------|-------------------|
-| Ctrl+S      | Save              |
-| Ctrl+Z      | Undo              |
-| Ctrl+Y      | Redo              |
-| Ctrl+N      | New tab           |
-| Ctrl+W      | Close tab         |
-| Home / End  | Line start / end  |
-| Page Up/Dn  | Scroll page       |
-| Tab         | Indent 4 spaces   |
+Place your icon at `res/mipmap-hdpi/ic_launcher.png` (square PNG). The CI copies it automatically.

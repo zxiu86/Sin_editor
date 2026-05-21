@@ -2,8 +2,14 @@
 #include <algorithm>
 #include <stdexcept>
 #include <numeric>
+#include <android/log.h>
 
 namespace sino {
+
+#define TAG "SINEditorNative"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -12,23 +18,75 @@ size_t PieceTable::count_lines(std::string_view sv) const {
 }
 
 void PieceTable::push_snapshot() {
+    // Trim stacks before pushing to maintain memory limits
+    trim_undo_stack();
+    trim_redo_stack();
+
     undo_stack_.push_back({pieces_, added_buf_.size(), total_chars_});
     redo_stack_.clear();   // branching history
     dirty_ = true;
+
+    LOGI("Snapshot pushed. Undo: %zu, Added buf: %zu bytes", 
+         undo_stack_.size(), added_buf_.size());
+}
+
+void PieceTable::trim_undo_stack() {
+    while (undo_stack_.size() >= MAX_UNDO_SNAPSHOTS) {
+        undo_stack_.erase(undo_stack_.begin());
+        LOGW("Undo stack trimmed (memory pressure)");
+    }
+}
+
+void PieceTable::trim_redo_stack() {
+    while (redo_stack_.size() >= MAX_REDO_SNAPSHOTS) {
+        redo_stack_.erase(redo_stack_.begin());
+    }
+}
+
+void PieceTable::enforce_memory_limits() {
+    // If added buffer exceeds cap, force compaction by clearing history
+    if (added_buf_.size() > MAX_ADDED_BUFFER_SIZE) {
+        LOGW("Memory limit reached (%zu > %zu). Compacting...", 
+             added_buf_.size(), MAX_ADDED_BUFFER_SIZE);
+
+        // Materialize current text and reset
+        std::string current = text();
+        original_buf_ = std::move(current);
+        added_buf_.clear();
+        added_buf_.shrink_to_fit();
+
+        pieces_.clear();
+        if (!original_buf_.empty()) {
+            pieces_.push_back({
+                BufferType::Original, 0,
+                original_buf_.size(),
+                count_lines(original_buf_)
+            });
+        }
+
+        // Clear history since buffers changed
+        undo_stack_.clear();
+        redo_stack_.clear();
+        total_chars_ = original_buf_.size();
+
+        LOGI("Compaction complete. New size: %zu bytes", total_chars_);
+    }
 }
 
 // Returns {piece_index, byte_offset_within_piece}
 std::pair<size_t, size_t> PieceTable::find_piece(size_t char_pos) const {
+    if (pieces_.empty()) return {0, 0};
+
     size_t acc = 0;
     for (size_t i = 0; i < pieces_.size(); ++i) {
-        if (char_pos <= acc + pieces_[i].length)
+        if (char_pos < acc + pieces_[i].length)
             return {i, char_pos - acc};
         acc += pieces_[i].length;
     }
     return {pieces_.size(), 0};  // end of document
 }
 
-// ── Constructor ───────────────────────────────────────────────────────────────
+// ── Constructor / Destructor ───────────────────────────────────────────────────
 
 PieceTable::PieceTable(std::string original)
     : original_buf_(std::move(original))
@@ -41,22 +99,68 @@ PieceTable::PieceTable(std::string original)
         });
         total_chars_ = original_buf_.size();
     }
+    LOGI("PieceTable created. Size: %zu bytes, Lines: %zu", 
+         total_chars_, line_count());
+}
+
+PieceTable::~PieceTable() {
+    LOGI("PieceTable destroyed. Final size: %zu bytes", total_chars_);
+}
+
+// Move constructor
+PieceTable::PieceTable(PieceTable&& other) noexcept
+    : original_buf_(std::move(other.original_buf_))
+    , added_buf_(std::move(other.added_buf_))
+    , pieces_(std::move(other.pieces_))
+    , total_chars_(other.total_chars_)
+    , undo_stack_(std::move(other.undo_stack_))
+    , redo_stack_(std::move(other.redo_stack_))
+    , dirty_(other.dirty_)
+{
+    other.total_chars_ = 0;
+    other.dirty_ = false;
+}
+
+PieceTable& PieceTable::operator=(PieceTable&& other) noexcept {
+    if (this != &other) {
+        original_buf_ = std::move(other.original_buf_);
+        added_buf_ = std::move(other.added_buf_);
+        pieces_ = std::move(other.pieces_);
+        total_chars_ = other.total_chars_;
+        undo_stack_ = std::move(other.undo_stack_);
+        redo_stack_ = std::move(other.redo_stack_);
+        dirty_ = other.dirty_;
+        other.total_chars_ = 0;
+        other.dirty_ = false;
+    }
+    return *this;
 }
 
 // ── Insert ────────────────────────────────────────────────────────────────────
 
 void PieceTable::insert(size_t char_pos, std::string_view text) {
     if (text.empty()) return;
+
+    // Bounds check
+    if (char_pos > total_chars_) {
+        LOGE("Insert out of bounds: pos=%zu, total=%zu", char_pos, total_chars_);
+        char_pos = total_chars_;  // Clamp to end
+    }
+
     push_snapshot();
 
     size_t added_start = added_buf_.size();
     added_buf_.append(text);
+
+    // Check memory limits after append
+    enforce_memory_limits();
+
     Piece new_piece{BufferType::Added, added_start, text.size(), count_lines(text)};
     total_chars_ += text.size();
 
     auto [idx, off] = find_piece(char_pos);
 
-    if (idx == pieces_.size()) {
+    if (idx >= pieces_.size()) {
         pieces_.push_back(new_piece);
         return;
     }
@@ -70,16 +174,20 @@ void PieceTable::insert(size_t char_pos, std::string_view text) {
     } else {
         // Split piece[idx] at off
         Piece& p = pieces_[idx];
-        Piece  left  = {p.buffer, p.start,        off,              count_lines({added_buf_.data() + p.start, off})};
-        Piece  right = {p.buffer, p.start + off,   p.length - off,   p.lines - left.lines};
-        if (p.buffer == BufferType::Original) {
-            left.lines  = count_lines({original_buf_.data() + p.start, off});
-            right.lines = p.lines - left.lines;
+
+        // Calculate line counts for split pieces
+        size_t left_lines = 0, right_lines = 0;
+        const std::string& buf = (p.buffer == BufferType::Original) ? original_buf_ : added_buf_;
+
+        for (size_t i = p.start; i < p.start + off; ++i) {
+            if (buf[i] == '\n') ++left_lines;
         }
+        right_lines = p.lines - left_lines;
+
+        Piece left  = {p.buffer, p.start,        off,              left_lines};
+        Piece right = {p.buffer, p.start + off,   p.length - off,   right_lines};
+
         pieces_.erase(pieces_.begin() + idx);
-        pieces_.insert(pieces_.begin() + idx, {right, new_piece, left});  // reversed insert
-        // Fix: insert in correct order
-        pieces_.erase(pieces_.begin() + idx, pieces_.begin() + idx + 3);
         pieces_.insert(pieces_.begin() + idx, left);
         pieces_.insert(pieces_.begin() + idx + 1, new_piece);
         pieces_.insert(pieces_.begin() + idx + 2, right);
@@ -90,6 +198,16 @@ void PieceTable::insert(size_t char_pos, std::string_view text) {
 
 void PieceTable::erase(size_t char_pos, size_t count) {
     if (count == 0) return;
+
+    // Bounds check
+    if (char_pos >= total_chars_) {
+        LOGE("Erase out of bounds: pos=%zu, total=%zu", char_pos, total_chars_);
+        return;
+    }
+    if (char_pos + count > total_chars_) {
+        count = total_chars_ - char_pos;
+    }
+
     push_snapshot();
     total_chars_ -= count;
 
@@ -112,19 +230,25 @@ void PieceTable::erase(size_t char_pos, size_t count) {
             // Keep left portion
             Piece p = pieces_[i];
             p.length = off0;
-            p.lines  = count_lines(p.buffer == BufferType::Original
-                ? std::string_view(original_buf_.data() + p.start, off0)
-                : std::string_view(added_buf_.data()   + p.start, off0));
+
+            const std::string& buf = (p.buffer == BufferType::Original) ? original_buf_ : added_buf_;
+            p.lines = 0;
+            for (size_t j = p.start; j < p.start + off0; ++j) {
+                if (buf[j] == '\n') ++p.lines;
+            }
             rebuilt.push_back(p);
         }
-        if (i == i1 && off1 < pieces_[i].length) {
+        if (i == i1 && i1 < pieces_.size() && off1 < pieces_[i].length) {
             // Keep right portion
             Piece p = pieces_[i];
             p.start  += off1;
             p.length -= off1;
-            p.lines   = count_lines(p.buffer == BufferType::Original
-                ? std::string_view(original_buf_.data() + p.start, p.length)
-                : std::string_view(added_buf_.data()   + p.start, p.length));
+
+            const std::string& buf = (p.buffer == BufferType::Original) ? original_buf_ : added_buf_;
+            p.lines = 0;
+            for (size_t j = p.start; j < p.start + p.length; ++j) {
+                if (buf[j] == '\n') ++p.lines;
+            }
             rebuilt.push_back(p);
         }
     }
@@ -175,6 +299,8 @@ size_t PieceTable::char_count() const { return total_chars_; }
 
 Point PieceTable::offset_to_point(size_t char_pos) const {
     Point pt{0, 0};
+    if (char_pos > total_chars_) char_pos = total_chars_;
+
     size_t acc = 0;
     for (const auto& p : pieces_) {
         const std::string& buf = (p.buffer == BufferType::Original) ? original_buf_ : added_buf_;
@@ -205,22 +331,51 @@ size_t PieceTable::point_to_offset(Point p_) const {
 void PieceTable::undo() {
     if (undo_stack_.empty()) return;
     redo_stack_.push_back({pieces_, added_buf_.size(), total_chars_});
+    trim_redo_stack();
+
     auto& snap = undo_stack_.back();
     pieces_      = snap.pieces;
     total_chars_ = snap.total_chars;
     // added_buf_ is append-only; no shrink needed — pieces won't reference future data
     undo_stack_.pop_back();
     dirty_ = !undo_stack_.empty();
+
+    LOGI("Undo performed. Remaining undo: %zu", undo_stack_.size());
 }
 
 void PieceTable::redo() {
     if (redo_stack_.empty()) return;
     undo_stack_.push_back({pieces_, added_buf_.size(), total_chars_});
+    trim_undo_stack();
+
     auto& snap = redo_stack_.back();
     pieces_      = snap.pieces;
     total_chars_ = snap.total_chars;
     redo_stack_.pop_back();
     dirty_ = true;
+
+    LOGI("Redo performed. Remaining redo: %zu", redo_stack_.size());
+}
+
+// ── Memory Management ─────────────────────────────────────────────────────────
+
+size_t PieceTable::memory_usage() const {
+    size_t total = original_buf_.capacity() + added_buf_.capacity();
+    total += pieces_.capacity() * sizeof(Piece);
+    total += undo_stack_.capacity() * sizeof(Snapshot);
+    total += redo_stack_.capacity() * sizeof(Snapshot);
+    for (const auto& snap : undo_stack_) {
+        total += snap.pieces.capacity() * sizeof(Piece);
+    }
+    for (const auto& snap : redo_stack_) {
+        total += snap.pieces.capacity() * sizeof(Piece);
+    }
+    return total;
+}
+
+void PieceTable::compact() {
+    LOGI("Manual compaction requested. Current: %zu bytes", memory_usage());
+    enforce_memory_limits();
 }
 
 } // namespace sino
