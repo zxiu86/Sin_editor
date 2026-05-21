@@ -8,22 +8,36 @@ SIN Editor is now **Android-only**. All desktop support (Raylib, Windows, Linux,
 
 ```
 sin_editor/
-├── CMakeLists.txt              ← Android-only CMake (shared library .so)
-├── settings.gradle.kts         ← Gradle project settings
-├── .github/workflows/ci.yml    ← Android-only CI
-├── AndroidManifest.xml         ← Android app manifest
+├── build.gradle.kts              ← Root Gradle (plugins)
+├── settings.gradle.kts           ← Project settings
+├── CMakeLists.txt                ← ← ← ROOT CMake (delegates to cpp/)
+├── gradle.properties             ← JVM args + AndroidX
+├── .github/workflows/ci.yml      ← Android CI
+├── ARCHITECTURE.md
+├── README.md
+├── STRUCTURE.md
 └── app/
+    ├── build.gradle.kts          ← App module config (CMake path)
+    ├── proguard-rules.pro        ← ProGuard rules
     └── src/main/
+        ├── AndroidManifest.xml
         ├── cpp/
-        │   ├── piece_table.h       ← Core text engine (Piece Table)
-        │   ├── piece_table.cpp     ← Piece Table implementation
-        │   └── jni_bridge.cpp      ← JNI bridge (19 native functions)
-        └── java/com/sineditor/app/
-            ├── EditorEngine.kt       ← JNI wrapper with memory monitoring
-            ├── EditorView.kt         ← Canvas rendering, touch UI
-            ├── FindReplaceDialog.kt  ← Search & replace overlay
-            ├── MainActivity.kt       ← Main activity & tab management
-            └── SyntaxHighlighter.kt  ← SINO language tokenizer
+        │   ├── CMakeLists.txt    ← NDK CMake (shared library)
+        │   ├── piece_table.h
+        │   ├── piece_table.cpp
+        │   └── jni_bridge.cpp
+        ├── java/com/sineditor/app/
+        │   ├── EditorEngine.kt
+        │   ├── EditorView.kt
+        │   ├── MainActivity.kt
+        │   ├── FindReplaceDialog.kt
+        │   └── SyntaxHighlighter.kt
+        └── res/
+            ├── values/
+            │   ├── strings.xml
+            │   └── themes.xml
+            └── mipmap-hdpi/
+                └── ic_launcher.png  
 ```
 
 ---
